@@ -92,6 +92,49 @@ def split_matches(match_ids: pd.Series, test_size: float = 0.2, seed: int = 42):
     return matches[train_idx], matches[test_idx]
 
 
+def run_pipeline(raw_csv_path: str = "data/raw/train_V2.csv"):
+    """Execute full data cleaning, feature engineering, and match-based train/test splitting."""
+    splits_dir = Path("data/processed/splits")
+    splits_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Reading raw data from {raw_csv_path}...")
+    df_raw = pl.read_csv(raw_csv_path)
+    print(f"Raw data shape: {df_raw.shape}")
+
+    print("Cleaning data...")
+    total_dist = pl.col('walkDistance') + pl.col('rideDistance') + pl.col('swimDistance')
+    cheaters = (
+        ((total_dist == 0) & (pl.col('kills') > 0)) |
+        ((pl.col('kills') >= 10) & (pl.col('headshotKills') == pl.col('kills'))) |
+        (pl.col('longestKill') > 1000) |
+        (pl.col('weaponsAcquired') > 50)
+    )
+    df_clean = df_raw.filter(pl.col('winPlacePerc').is_not_null() & ~cheaters)
+    print(f"Cleaned data shape: {df_clean.shape}")
+
+    clean_path = "data/processed/train_cleaned.parquet"
+    print(f"Saving cleaned data to {clean_path}...")
+    df_clean.write_parquet(clean_path, compression="snappy")
+
+    print("Engineering features...")
+    df_feat = engineer_features(df_clean)
+    print(f"Engineered features shape: {df_feat.shape}")
+
+    feat_path = "data/processed/features_full.parquet"
+    print(f"Saving engineered features to {feat_path}...")
+    df_feat.write_parquet(feat_path, compression="snappy")
+
+    print("Splitting matches 80/20 by matchId...")
+    match_ids = df_feat.select("matchId").to_series().to_numpy()
+    train_matches, test_matches = split_matches(pd.Series(match_ids), test_size=0.2, seed=42)
+
+    np.save("data/processed/splits/train_match_ids.npy", train_matches)
+    np.save("data/processed/splits/test_match_ids.npy", test_matches)
+    print("Saved match splits successfully.")
+
+    verify_processed_data()
+
+
 def verify_processed_data():
     """Verify shapes and match splits of existing processed data."""
     clean_df = pl.scan_parquet("data/processed/train_cleaned.parquet")
@@ -107,4 +150,11 @@ def verify_processed_data():
 
 
 if __name__ == "__main__":
-    verify_processed_data()
+    if not (Path("data/processed/features_full.parquet").exists() and
+            Path("data/processed/splits/train_match_ids.npy").exists()):
+        print("Processed data not found. Running end-to-end pipeline...")
+        run_pipeline()
+    else:
+        verify_processed_data()
+
+

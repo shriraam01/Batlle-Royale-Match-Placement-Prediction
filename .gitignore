@@ -28,6 +28,8 @@ models/*.pkl
 models/*.joblib
 models/*.txt
 models/*.onnx
+models/*.parquet
+
 
 # Jupyter / IDE / OS
 .ipynb_checkpoints/
